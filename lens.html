@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0d1117">
 <title>ÜAZ Lens</title>
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
 <style>
 :root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--acc:#2ea043;--acc2:#f0b429;--err:#f85149;--blue:#388bfd}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -572,31 +572,55 @@ $('#camPos').onchange=e=>{ settings.camPos=e.target.value; updateCamDir(); store
 $('#showGrid').onchange=e=>{ settings.showGrid=e.target.checked; store.set('settings',settings); };
 $('#showDiff').onchange=e=>{ settings.showDiff=e.target.checked; store.set('settings',settings); };
 
-// ---------- Verbindung (PeerJS / WebRTC) ----------
-let peer=null, conn=null, queue=[];
+// ---------- Verbindung (MQTT über WSS – klappt im WLAN und im Mobilfunk) ----------
+const BROKERS=['wss://broker.hivemq.com:8884/mqtt','wss://broker.emqx.io:8084/mqtt'];
+const TOPIC='uaz-waren/lens/v1/';
+let clients=[], queue=[], code='', pcOnline=false, pingT=0, findT=0;
 const cpill=$('#cpill');
 function setPill(t,cls){ cpill.textContent=t; cpill.className='pill'+(cls?' '+cls:''); }
-function send(m){ if(conn && conn.open) conn.send(m); else { queue.push(m); if(queue.length>50) queue.shift(); } }
+function anyUp(){ return clients.some(c=>c.connected); }
+function publish(m){ const s=JSON.stringify(m); clients.forEach(c=>{ if(c.connected) c.publish(TOPIC+code+'/tx', s, {qos:1}); }); }
+function send(m){
+  m.mid=newId();
+  if(code && anyUp()) publish(m); else { queue.push(m); if(queue.length>50) queue.shift(); }
+}
+function updatePill(){
+  if(!code) return setPill('nicht verbunden');
+  if(!anyUp()) return setPill('kein Internet / Server …','err');
+  if(pcOnline) return setPill('verbunden '+code,'ok');
+  setPill('PC-Seite mit Code '+code+' nicht offen','err');
+}
 function connect(){
-  const code=$('#code').value.replace(/\D/g,'');
-  if(code.length!==4){ setPill('Code: 4 Ziffern','err'); return; }
-  store.set('code', code);
-  if(typeof Peer==='undefined'){ setPill('Verbindungsbibliothek fehlt','err'); return; }
-  if(conn) try{ conn.close(); }catch(e){}
-  setPill('verbinde …');
-  const go=()=>{
-    conn=peer.connect('uazlens-'+code, {reliable:true});
-    conn.on('open', ()=>{ setPill('verbunden '+code,'ok'); conn.send({type:'hello', app:'ÜAZ Lens', v:1}); while(queue.length) conn.send(queue.shift()); });
-    conn.on('data', m=>{ if(m && m.type==='info') $('#info').textContent=m.text||''; });
-    conn.on('close', ()=>{ setPill('getrennt','err'); setTimeout(()=>{ if(!conn||!conn.open) connect(); }, 3000); });
-    conn.on('error', ()=>setPill('Fehler','err'));
-  };
-  if(peer && peer.open) go();
-  else { peer=new Peer(); peer.on('open', go); peer.on('error', e=>{ setPill(e.type==='peer-unavailable'?'Dartbord nicht gefunden':'Verbindungsfehler','err'); });
-         peer.on('disconnected', ()=>{ try{ peer.reconnect(); }catch(e){} }); }
+  const c=$('#code').value.replace(/\D/g,'');
+  if(c.length!==4){ setPill('Code: 4 Ziffern','err'); return; }
+  if(typeof mqtt==='undefined'){ setPill('Verbindungsbibliothek fehlt (Internet?)','err'); return; }
+  store.set('code', c);
+  clients.forEach(x=>{ try{ x.end(true); }catch(e){} });
+  clients=[]; code=c; pcOnline=false;
+  setPill('verbinde mit '+code+' …');
+  BROKERS.forEach(url=>{
+    const cl=mqtt.connect(url,{clientId:'uazlens-ph-'+Math.random().toString(16).slice(2,10), reconnectPeriod:2000, connectTimeout:8000, clean:true});
+    cl.on('connect', ()=>{
+      cl.subscribe([TOPIC+code+'/pc', TOPIC+code+'/rx'], {qos:1});
+      cl.publish(TOPIC+code+'/tx', JSON.stringify({type:'hello', app:'ÜAZ Lens', v:3, mid:newId()}), {qos:1});
+      while(queue.length) publish(queue.shift());
+      clearTimeout(findT); findT=setTimeout(updatePill, 5000);
+      updatePill();
+    });
+    cl.on('message', (t, buf)=>{
+      const s=buf.toString();
+      if(t.endsWith('/pc')){ cl.pcOn = s==='online'; pcOnline = clients.some(x=>x.pcOn); updatePill(); return; }
+      try{ const m=JSON.parse(s); if(m.type==='info') $('#info').textContent=m.text||''; }catch(e){}
+    });
+    cl.on('offline', updatePill);
+    cl.on('close', updatePill);
+    cl.on('error', ()=>{});
+    clients.push(cl);
+  });
+  clearInterval(pingT); pingT=setInterval(()=>{ if(anyUp()) publish({type:'ping', mid:newId()}); }, 5000);
 }
 $('#btnConnect').onclick=connect;
-const saved=store.get('code',''); if(saved){ $('#code').value=saved; setTimeout(connect, 500); }
+const saved=store.get('code',''); if(saved){ $('#code').value=saved; setTimeout(connect, 300); }
 
 render();
 startCamera();
