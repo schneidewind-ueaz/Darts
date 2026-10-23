@@ -7,7 +7,9 @@
  *   UAZLens.setAdapter({
  *     dart:    d => { ... },   // Dart eintragen. d = {code:'T20', label:'T20', num:20, mult:3, value:60}
  *     undo:    () => { ... },  // letzten eingetragenen Dart zurücknehmen
- *     takeout: () => { ... }   // optional: Darts wurden gezogen (z. B. Spielerwechsel bestätigen)
+ *     takeout: () => { ... },  // optional: Darts wurden gezogen (z. B. Spielerwechsel bestätigen)
+ *     setDart: (i, d) => {...}, // optional: Dart Nr. i des laufenden Zuges ersetzen
+ *     getState: () => ({active, player, rest, darts:[{label,value}], pending})  // optional: Zug ans iPhone spiegeln
  *   });
  *
  * Werte von d:  num = 1–20, 25 (Bull-Bereich) oder 0 (Miss)
@@ -21,7 +23,7 @@
   var MQTT_URL = 'https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js';
   var BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
   var TOPIC = 'uaz-waren/lens/v1/';
-  var S = { clients: [], code: null, adapter: null, visit: [], seen: {}, seenList: [], lastSeen: 0, log: [] };
+  var S = { seenDart: {}, lastState: '', clients: [], code: null, adapter: null, visit: [], seen: {}, seenList: [], lastSeen: 0, log: [] };
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -35,6 +37,9 @@
     }
     return false;
   }
+  function call2(fn, a, b) {
+    if (S.adapter && typeof S.adapter[fn] === 'function') { try { S.adapter[fn](a, b); } catch (e) { console.error('[ÜAZ Lens] Adapter-Fehler (' + fn + '):', e); } }
+  }
   function log(t) { S.log.unshift(t); S.log = S.log.slice(0, 6); ui(); }
   function phoneOnline() { return Date.now() - S.lastSeen < 15000; }
 
@@ -44,7 +49,22 @@
     var i;
     switch (m.type) {
       case 'hello': log('Lens verbunden'); break;
+      case 'set':   // Dart Nr. index des laufenden Zuges ersetzen
+        if (S.adapter && typeof S.adapter.setDart === 'function') { call2('setDart', m.index, m.dart); log('Korrigiert: Dart ' + (m.index + 1) + ' → ' + m.dart.label); }
+        break;
+      case 'add':   // Dart nachtragen
+        call('dart', m.dart); log('Nachgetragen: ' + m.dart.label);
+        break;
+      case 'pop':   // letzten Dart des laufenden Zuges zurücknehmen
+        call('undo'); log('Zurückgenommen');
+        break;
       case 'dart':
+        if (S.adapter && typeof S.adapter.getState === 'function') {
+          // Dartbord führt den Zug selbst -> einfach eintragen
+          if (S.seenDart[m.id]) return; S.seenDart[m.id] = 1;
+          call('dart', m.dart); emit('dart', m.dart); log('Treffer: ' + m.dart.label);
+          return;
+        }
         for (i = 0; i < S.visit.length; i++) if (S.visit[i].id === m.id) return;
         // Gleichlauf: erster Dart einer neuen Aufnahme am iPhone -> alte Aufnahme am PC abschließen
         if ((m.idx === 0 && S.visit.length) || S.visit.length >= 3) handle({ type: 'takeout' });
@@ -110,6 +130,7 @@
       c.on('connect', function () {
         c.subscribe(base + '/tx', { qos: 1 });
         c.publish(base + '/pc', 'online', { qos: 1, retain: true });
+        S.lastState = ''; setTimeout(function () { pushState(true); }, 200);
         ui();
       });
       c.on('message', onMessage);
@@ -119,6 +140,18 @@
   }
   function serverUp() { return S.clients.some(function (c) { return c.connected; }); }
   window.addEventListener('pagehide', stop);
+  var lastStateSent = 0;
+  function pushState(force) {
+    if (!S.adapter || typeof S.adapter.getState !== 'function' || !serverUp()) return;
+    var st; try { st = S.adapter.getState(); } catch (e) { return; }
+    var key = JSON.stringify(st);
+    if (!force && key === S.lastState && Date.now() - lastStateSent < 5000) return;
+    S.lastState = key; lastStateSent = Date.now();
+    st.ts = Date.now();
+    var payload = JSON.stringify(st);
+    S.clients.forEach(function (c) { try { if (c.connected) c.publish(TOPIC + S.code + '/st', payload, { qos: 1, retain: true }); } catch (e) {} });
+  }
+  setInterval(pushState, 300);
   setInterval(ui, 3000);
 
   /* ---------- Oberfläche (schwebender Knopf) ---------- */
@@ -136,7 +169,7 @@
     var st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
     btn = document.createElement('button'); btn.id = 'uazl-btn'; btn.title = 'ÜAZ Lens'; btn.innerHTML = '📷<i></i>';
     pan = document.createElement('div'); pan.id = 'uazl-pan';
-    pan.innerHTML = '<h4>ÜAZ LENS – Kamera <small style="color:#8b949e">v4</small></h4><div>Code am iPhone eingeben:</div><div id="uazl-code">----</div><div id="uazl-st"></div>' +
+    pan.innerHTML = '<h4>ÜAZ LENS – Kamera <small style="color:#8b949e">v5</small></h4><div>Code am iPhone eingeben:</div><div id="uazl-code">----</div><div id="uazl-st"></div>' +
       '<div id="uazl-log"></div><div><button data-a="new">Neuer Code</button><button data-a="t20">Test T20</button><button data-a="bull">Test Bull</button></div>';
     document.body.appendChild(btn); document.body.appendChild(pan);
     btn.onclick = function () { pan.classList.toggle('open'); };

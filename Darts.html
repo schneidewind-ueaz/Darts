@@ -12282,19 +12282,31 @@ tryQuickReconnectSetup();
         let n=0; while(!game.turnPending && game.currentDarts.length<3 && n++<3) registerDart(makeDart(null,0));
       }
       if(game.turnPending) finalizeTurn(currentPlayerId());
+    },
+    // Dart Nr. i des laufenden Zuges ersetzen (Korrektur am iPhone) – die folgenden Darts werden neu verrechnet
+    setDart: function(i, d){
+      if(!spielOffen() || i<0 || i>=game.currentDarts.length) return;
+      const pid=currentPlayerId();
+      const danach=game.currentDarts.slice(i+1);
+      game.currentDarts.splice(i);
+      replayCurrentTurn(pid);
+      registerDart(zuDart(d));
+      danach.forEach(function(x){ registerDart(makeDart(x.baseNumber, x.mult)); });
+      renderGame();
+    },
+    // laufenden Zug ans iPhone spiegeln
+    getState: function(){
+      if(!spielOffen()) return {active:false};
+      const pid=currentPlayerId();
+      return {
+        active:true,
+        player: compPlayerName(pid),
+        rest: (game.mode==='x01' && game.scores && typeof game.scores[pid]==='number') ? game.scores[pid] : null,
+        darts: game.currentDarts.map(function(x){ return {label:x.label, value:x.x01Value}; }),
+        pending: !!game.turnPending
+      };
     }
   });
-  // Wer ist dran? -> Anzeige auf dem iPhone
-  let letzteInfo='';
-  setInterval(function(){
-    let t='';
-    if(spielOffen()){
-      const pid=currentPlayerId();
-      t='Am Wurf: '+compPlayerName(pid);
-      if(game.scores && typeof game.scores[pid]==='number' && game.mode==='x01') t+=' – Rest '+game.scores[pid];
-    }
-    if(t!==letzteInfo){ letzteInfo=t; UAZLens.info(t); }
-  }, 1000);
 })();
 </script>
 </body>

@@ -66,7 +66,7 @@ label.set{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}
 </head>
 <body>
 <header>
-  <h1>ÜAZ <span>LENS</span> <small style="font-size:11px;color:#8b949e;letter-spacing:0">v4</small></h1>
+  <h1>ÜAZ <span>LENS</span> <small style="font-size:11px;color:#8b949e;letter-spacing:0">v5</small></h1>
   <span id="cpill" class="pill">nicht verbunden</span>
   <div class="conn">
     <input id="code" inputmode="numeric" maxlength="4" placeholder="Code">
@@ -479,8 +479,10 @@ function loop(){
         if(hit) addDart(scoreAt(hit.x,hit.y), [hit.x,hit.y]);
       } else if(change>=th.maxDart){
         // große Veränderung: Hand/Person – oder Darts schon gezogen
-        if(visit.length && countDiff(cur,emptyRef,th.T)<th.minDart) takeout(false);
+        if(dartCount() && countDiff(cur,emptyRef,th.T)<th.minDart) takeout(false);
+        else if(++bigStill>15){ ref=cur; if(!dartCount()) emptyRef=cur; bigStill=0; } // Bild hat sich dauerhaft geändert
       } else if(change < th.minDart*0.3){ ref=cur; } // Lichtdrift ausgleichen
+      if(change<th.maxDart) bigStill=0;
     } else if(state==='waitTakeout'){
       if(countDiff(cur,emptyRef,th.T)<th.minDart) takeout(false);
     }
@@ -520,8 +522,8 @@ function draw(){
     for(const k of lastDiff) octx.fillRect((k%AW)*q,Math.floor(k/AW)*q,q,q);
   }
   if(Hb2i && !calMode){
-    visit.forEach((d,i)=>{ if(!d.pos) return; const p=P(d.pos[0],d.pos[1]);
-      octx.fillStyle = i===visit.length-1 ? '#f0b429' : '#388bfd';
+    const sd=shownDarts(); sd.forEach((d,i)=>{ if(!d.pos) return; const p=P(d.pos[0],d.pos[1]); if(!p) return;
+      octx.fillStyle = i===sd.length-1 ? '#f0b429' : '#388bfd';
       octx.beginPath(); octx.arc(p[0],p[1],W/90,0,2*Math.PI); octx.fill();
       octx.strokeStyle='#000'; octx.lineWidth=2; octx.stroke(); });
   }
@@ -534,15 +536,22 @@ function draw(){
 }
 
 // ---------- Aufnahme / Korrektur ----------
-let seq=0;
+// Ist das Dartbord verbunden und läuft ein Spiel, gilt dessen Zug (pcState) – das iPhone spiegelt ihn nur.
+let seq=0, pcState=null, lastPcN=0, lastPcPlayer='', bigStill=0;
 function newId(){ return Date.now().toString(36)+'-'+(seq++); }
+function pcMode(){ return !!(pcOnline && pcState && pcState.active); }
+function dartCount(){ return pcMode() ? pcState.darts.length : visit.length; }
+function shownDarts(){
+  if(!pcMode()) return visit;
+  return pcState.darts.map((d,i)=>({label: d.label==='0' ? 'Miss' : d.label, value:d.value, pos: visit[i] ? visit[i].pos : null}));
+}
 function addDart(d, pos){
-  if(visit.length>=3) return;
+  if(dartCount()>=3) return;
   const dart=Object.assign({id:newId(), pos}, d);
   visit.push(dart);
-  send({type:'dart', id:dart.id, idx:visit.length-1, dart:pub(dart)});
+  send({type:'dart', id:dart.id, idx:dartCount(), dart:pub(dart)});
   if(navigator.vibrate) navigator.vibrate(40);
-  if(visit.length>=3) state='waitTakeout';
+  if(!pcMode() && visit.length>=3) state='waitTakeout';
   render();
 }
 function pub(d){ return {code:d.code, label:d.label, num:d.num, mult:d.mult, value:d.value}; }
@@ -552,13 +561,31 @@ function takeout(manual){
   send({type:'takeout'});
   render();
 }
+// Zustand vom Dartbord übernehmen
+function applyPcState(m){
+  pcState=m;
+  if(!m || !m.active){ $('#info').textContent = m ? 'Am Dartbord ist gerade kein Spiel offen.' : ''; render(); return; }
+  $('#info').textContent = 'Am Wurf: '+m.player+(m.rest!=null ? ' – Rest '+m.rest : '');
+  const n=m.darts.length;
+  // neuer Zug (am PC abgeschlossen oder Spieler gewechselt) -> lokale Markierungen leeren
+  if((n===0 && lastPcN>0) || m.player!==lastPcPlayer){ visit=[]; if(state==='waitTakeout'){ state='armed'; ref=prev||ref; } }
+  // am PC zurückgenommen -> überzählige Markierungen entfernen
+  if(visit.length>n) visit.length=n;
+  if(m.pending || n>=3) state='waitTakeout';
+  else if(state==='waitTakeout') state='armed';
+  lastPcN=n; lastPcPlayer=m.player;
+  render();
+}
 $('#btnTakeout').onclick=()=>takeout(true);
-$('#btnUndo').onclick=()=>{ const d=visit.pop(); if(!d) return; send({type:'undo', id:d.id}); state='armed'; resetRefPending=true; render(); };
+$('#btnUndo').onclick=()=>{
+  if(pcMode()){ if(!pcState.darts.length) return; send({type:'pop'}); visit.pop(); state='armed'; resetRefPending=true; render(); return; }
+  const d=visit.pop(); if(!d) return; send({type:'undo', id:d.id}); state='armed'; resetRefPending=true; render();
+};
 
 document.querySelectorAll('.chip[data-i]').forEach(ch=>ch.onclick=()=>{
-  const i=+ch.dataset.i;
-  padMode = i<visit.length ? {replace:i} : {add:true};
-  $('#padTitle').textContent = padMode.replace!==undefined ? `Dart ${i+1} korrigieren (erkannt: ${visit[i].label})` : `Dart ${visit.length+1} nachtragen`;
+  const i=+ch.dataset.i, list=shownDarts();
+  padMode = i<list.length ? {replace:i} : {add:true};
+  $('#padTitle').textContent = padMode.replace!==undefined ? `Dart ${i+1} korrigieren (jetzt: ${list[i].label})` : `Dart ${list.length+1} nachtragen`;
   closeSheets(); $('#pad').classList.add('open'); render();
 });
 const nums=$('#nums'); for(let n=1;n<=20;n++){ const b=document.createElement('button'); b.textContent=n; b.onclick=()=>applyPad(makeDart((padMult===3?'T':padMult===2?'D':'S')+n)); nums.appendChild(b); }
@@ -568,27 +595,35 @@ $('#padClose').onclick=()=>{ padMode=null; closeSheets(); render(); };
 function applyPad(d, pos){
   if(!padMode) return;
   if(padMode.replace!==undefined){
-    const old=visit[padMode.replace]; const nd=Object.assign({id:old.id, pos: pos||null}, d);
-    visit[padMode.replace]=nd; send({type:'replace', id:old.id, dart:pub(nd)});
+    const i=padMode.replace;
+    if(pcMode()){
+      send({type:'set', index:i, dart:pub(d)});
+      if(visit[i]) visit[i]=Object.assign({}, visit[i], d, {pos: pos||visit[i].pos});
+    } else {
+      const old=visit[i]; const nd=Object.assign({id:old.id, pos: pos||null}, d);
+      visit[i]=nd; send({type:'replace', id:old.id, dart:pub(nd)});
+    }
   } else {
-    addDart(d, pos||null);
+    if(pcMode()){ if(dartCount()<3){ send({type:'add', dart:pub(d)}); } }
+    else addDart(d, pos||null);
     ref=prev; // aktuelles Bild als neue Basis
   }
   padMode=null; padMult=1; document.querySelectorAll('.mult button').forEach(x=>x.classList.toggle('on',x.dataset.m==='1'));
   closeSheets(); render();
 }
 function render(){
+  const list=shownDarts();
   document.querySelectorAll('.chip[data-i]').forEach(ch=>{
-    const i=+ch.dataset.i, d=visit[i];
+    const i=+ch.dataset.i, d=list[i];
     ch.querySelector('span').textContent = d ? d.label : '–';
     ch.classList.toggle('full', !!d);
     ch.classList.toggle('sel', !!padMode && padMode.replace===i);
   });
-  $('#sum').textContent = visit.reduce((s,d)=>s+d.value,0);
+  $('#sum').textContent = list.reduce((s,d)=>s+(d.value||0),0);
   const st=$('#status');
   if(!calib) st.innerHTML='Noch nicht kalibriert.';
-  else if(state==='waitTakeout') st.innerHTML='<b>3 Darts erkannt.</b> Darts ziehen – wird automatisch erkannt.';
-  else st.innerHTML=`<b>Bereit</b> – Dart ${visit.length+1} werfen.`;
+  else if(state==='waitTakeout') st.innerHTML = (pcMode() && pcState.pending && list.length<3 ? '<b>Zug beendet.</b>' : '<b>3 Darts.</b>')+' Darts ziehen – wird automatisch erkannt.';
+  else st.innerHTML=`<b>Bereit</b> – Dart ${list.length+1} werfen.`;
 }
 function closeSheets(){ document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open')); }
 
@@ -625,12 +660,12 @@ function connect(){
   if(typeof mqtt==='undefined'){ setPill('Verbindungsbibliothek fehlt (Internet?)','err'); return; }
   store.set('code', c);
   clients.forEach(x=>{ try{ x.end(true); }catch(e){} });
-  clients=[]; code=c; pcOnline=false;
+  clients=[]; code=c; pcOnline=false; pcState=null;
   setPill('verbinde mit '+code+' …');
   BROKERS.forEach(url=>{
     const cl=mqtt.connect(url,{clientId:'uazlens-ph-'+Math.random().toString(16).slice(2,10), reconnectPeriod:2000, connectTimeout:8000, clean:true});
     cl.on('connect', ()=>{
-      cl.subscribe([TOPIC+code+'/pc', TOPIC+code+'/rx'], {qos:1});
+      cl.subscribe([TOPIC+code+'/pc', TOPIC+code+'/rx', TOPIC+code+'/st'], {qos:1});
       cl.publish(TOPIC+code+'/tx', JSON.stringify({type:'hello', app:'ÜAZ Lens', v:3, mid:newId()}), {qos:1});
       while(queue.length) publish(queue.shift());
       clearTimeout(findT); findT=setTimeout(updatePill, 5000);
@@ -638,8 +673,12 @@ function connect(){
     });
     cl.on('message', (t, buf)=>{
       const s=buf.toString();
-      if(t.endsWith('/pc')){ cl.pcOn = s==='online'; pcOnline = clients.some(x=>x.pcOn); updatePill(); return; }
-      try{ const m=JSON.parse(s); if(m.type==='info') $('#info').textContent=m.text||''; }catch(e){}
+      if(t.endsWith('/pc')){ cl.pcOn = s==='online'; pcOnline = clients.some(x=>x.pcOn); updatePill(); render(); return; }
+      try{
+        const m=JSON.parse(s);
+        if(t.endsWith('/st')){ if(!pcState || m.ts>=(pcState.ts||0)) applyPcState(m); return; }
+        if(m.type==='info' && !pcMode()) $('#info').textContent=m.text||'';
+      }catch(e){}
     });
     cl.on('offline', updatePill);
     cl.on('close', updatePill);
