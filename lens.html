@@ -66,7 +66,7 @@ label.set{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}
 </head>
 <body>
 <header>
-  <h1>ÜAZ <span>LENS</span></h1>
+  <h1>ÜAZ <span>LENS</span> <small style="font-size:11px;color:#8b949e;letter-spacing:0">v4</small></h1>
   <span id="cpill" class="pill">nicht verbunden</span>
   <div class="conn">
     <input id="code" inputmode="numeric" maxlength="4" placeholder="Code">
@@ -248,6 +248,7 @@ function checkCalibSize(){
   if(calib && calib.vw && Math.abs(calib.vw/calib.vh - vw/vh)<0.02){
     if(calib.vw!==vw){ const f=vw/calib.vw; calib.pts=calib.pts.map(p=>[p[0]*f,p[1]*f]); calib.vw=vw; calib.vh=vh; store.set('calib',calib); }
     applyCalib(calib.pts); banner.textContent='';
+    if(calibProblem){ banner.textContent='Gespeicherte Kalibrierung ist ungültig ('+calibProblem+') – bitte neu kalibrieren.'; calib=null; Hi2b=null; setupAnalysis(); render(); }
   } else {
     if(calib) banner.textContent='Bildformat hat sich geändert (iPhone gedreht?) – bitte neu kalibrieren.';
     else banner.textContent='Bitte zuerst kalibrieren (Knopf „Kalibrieren“).';
@@ -278,11 +279,33 @@ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==
 function applyCalib(pts){
   Hi2b = homography(pts, BOARD_PTS);
   Hb2i = homography(BOARD_PTS, pts);
-  if(!Hi2b||!Hb2i){ Hi2b=Hb2i=null; return false; }
+  if(!Hi2b||!Hb2i){ Hi2b=Hb2i=null; calibProblem='Die Punkte ergeben keine gültige Scheibe.'; return false; }
+  calibProblem=checkBoard();
   estimateCamDir();
   setupAnalysis();
   resetRefPending=true;
   return true;
+}
+// Prüft, ob die Kalibrierung eine plausible Scheibe ergibt. Gibt null oder einen Fehlertext zurück.
+let calibProblem=null;
+function wOK(H,x,y,ref){ return (H[6]*x+H[7]*y+H[8])*ref>0; }
+function checkBoard(){
+  const vw=video.videoWidth, vh=video.videoHeight, ref=Hb2i[8];
+  let minA=Infinity, maxA=0;
+  for(let i=0;i<72;i++){
+    const t=i/72*2*Math.PI, x=185*Math.sin(t), y=-185*Math.cos(t);
+    if(!wOK(Hb2i,x,y,ref)) return 'Die Scheibe ist zu flach von der Seite gefilmt.';
+    const p=apply(Hb2i,x,y);
+    if(p[0]<-0.05*vw||p[0]>1.05*vw||p[1]<-0.05*vh||p[1]>1.05*vh) return 'Die Scheibe ist nicht komplett im Bild.';
+  }
+  // Verhältnis kürzeste/längste Achse der Doppelring-Ellipse
+  for(let i=0;i<36;i++){
+    const t=i/36*Math.PI, a=apply(Hb2i,170*Math.sin(t),-170*Math.cos(t)), b=apply(Hb2i,-170*Math.sin(t),170*Math.cos(t));
+    const d=Math.hypot(a[0]-b[0],a[1]-b[1]); minA=Math.min(minA,d); maxA=Math.max(maxA,d);
+  }
+  if(minA/maxA<0.3) return 'Die Kamera schaut zu flach auf die Scheibe (steiler stellen, ca. 30–60°).';
+  if(maxA<0.35*Math.min(vw,vh)) return 'Die Scheibe ist im Bild zu klein – iPhone näher heranstellen.';
+  return null;
 }
 function estimateCamDir(){
   // Die Seite der Scheibe, die im Bild größer erscheint, ist der Kamera am nächsten.
@@ -306,6 +329,7 @@ function updateCamDir(){
 }
 function calMessage(){
   if(calPts.length<5) $('#calText').innerHTML = `Punkt ${calPts.length+1} von 5: Finger auf <b>${CAL_LABELS[calPts.length]}</b> legen, mit der Lupe genau ausrichten, dann loslassen.`;
+  else if(calibProblem) $('#calText').innerHTML = '<b>Gitter rot:</b> '+calibProblem;
   else $('#calText').innerHTML = 'Alle 5 Punkte gesetzt. Liegt das grüne Gitter auf den Drähten? Sonst Punkte mit dem Finger verschieben. Dann <b>Fertig</b>.';
 }
 function calEnter(){ closeSheets(); calMode=true; document.body.classList.add('cal'); stage.classList.add('full'); calMessage(); }
@@ -315,7 +339,7 @@ $('#calReset').onclick=()=>{ calPts=[]; Hi2b=Hb2i=null; calMessage(); };
 $('#calCancel').onclick=()=>{ calLeave(); if(calib) applyCalib(calib.pts); else { Hi2b=Hb2i=null; } };
 $('#calDone').onclick=()=>{
   if(calPts.length<5){ toast('Erst alle 5 Punkte setzen'); return; }
-  if(!applyCalib(calPts)){ $('#calText').textContent='Die Punkte ergeben keine gültige Scheibe – bitte neu setzen.'; return; }
+  if(!applyCalib(calPts) || calibProblem){ $('#calText').innerHTML='<b>Kalibrierung nicht übernommen:</b> '+(calibProblem||'Ungültige Punkte.')+' Gitter ist rot – iPhone neu ausrichten, dann „Neu anfangen“.'; return; }
   calib={pts:calPts.map(p=>p.slice()), vw:video.videoWidth, vh:video.videoHeight};
   store.set('calib', calib);
   calLeave(); render();
@@ -385,8 +409,12 @@ function setupAnalysis(){
   const N=AW*AH; bx=new Float32Array(N); by=new Float32Array(N); mask=new Uint8Array(N);
   const idx=[]; boardPx=0;
   if(Hi2b){
+    // nur Bildpunkte auf der "richtigen" Seite der Projektion (verhindert Fehlbereiche wie Monitor/Hintergrund)
+    const bc=apply(Hb2i,0,0), ref=Hi2b[6]*bc[0]+Hi2b[7]*bc[1]+Hi2b[8];
     for(let j=0;j<AH;j++) for(let i=0;i<AW;i++){
-      const k=j*AW+i, b=apply(Hi2b,(i+.5)/K,(j+.5)/K);
+      const k=j*AW+i, ix=(i+.5)/K, iy=(j+.5)/K;
+      if(!wOK(Hi2b,ix,iy,ref)) continue;
+      const b=apply(Hi2b,ix,iy);
       bx[k]=b[0]; by[k]=b[1];
       if(i>0&&j>0&&i<AW-1&&j<AH-1&&Math.hypot(b[0],b[1])<=185){ mask[k]=1; idx.push(k); }
     }
@@ -471,20 +499,21 @@ function draw(){
   // ab hier zeichnen in Videopixeln; W = Bezugsbreite für Strichstärken
   octx.setTransform(v.s*dpr,0,0,v.s*dpr,v.ox*dpr,v.oy*dpr);
   const W=video.videoWidth, s=1;
-  const P=(x,y)=>apply(Hb2i,x,y);
+  const P=(x,y)=>(Hb2i && wOK(Hb2i,x,y,Hb2i[8])) ? apply(Hb2i,x,y) : null;
   if(Hb2i && (settings.showGrid || calMode)){
-    octx.strokeStyle='rgba(46,160,67,.9)'; octx.lineWidth=Math.max(1,W/500);
+    octx.strokeStyle = calibProblem ? 'rgba(248,81,73,.9)' : 'rgba(46,160,67,.9)'; octx.lineWidth=Math.max(1,W/500);
     for(const r of [R.bull,R.outer,R.tIn,R.tOut,R.dIn,R.dOut]){
-      octx.beginPath();
-      for(let i=0;i<=72;i++){ const t=i/72*2*Math.PI, p=P(r*Math.sin(t),-r*Math.cos(t)); i?octx.lineTo(p[0],p[1]):octx.moveTo(p[0],p[1]); }
+      octx.beginPath(); let pen=false;
+      for(let i=0;i<=72;i++){ const t=i/72*2*Math.PI, p=P(r*Math.sin(t),-r*Math.cos(t)); if(!p){ pen=false; continue; } pen?octx.lineTo(p[0],p[1]):octx.moveTo(p[0],p[1]); pen=true; }
       octx.stroke();
     }
     for(let i=0;i<20;i++){
       const t=(i*18-9)*Math.PI/180, a=P(R.outer*Math.sin(t),-R.outer*Math.cos(t)), b=P(R.dOut*Math.sin(t),-R.dOut*Math.cos(t));
+      if(!a||!b) continue;
       octx.beginPath(); octx.moveTo(a[0],a[1]); octx.lineTo(b[0],b[1]); octx.stroke();
     }
     octx.fillStyle='rgba(240,180,41,.95)'; octx.font=`bold ${Math.round(W/38)}px sans-serif`; octx.textAlign='center'; octx.textBaseline='middle';
-    for(let i=0;i<20;i++){ const t=i*18*Math.PI/180, p=P(190*Math.sin(t),-190*Math.cos(t)); octx.fillText(SEG[i],p[0],p[1]); }
+    for(let i=0;i<20;i++){ const t=i*18*Math.PI/180, p=P(190*Math.sin(t),-190*Math.cos(t)); if(p) octx.fillText(SEG[i],p[0],p[1]); }
   }
   if(settings.showDiff && lastDiff && !calMode){
     octx.fillStyle='rgba(248,81,73,.55)'; const q=W/AW;
@@ -511,7 +540,7 @@ function addDart(d, pos){
   if(visit.length>=3) return;
   const dart=Object.assign({id:newId(), pos}, d);
   visit.push(dart);
-  send({type:'dart', id:dart.id, dart:pub(dart)});
+  send({type:'dart', id:dart.id, idx:visit.length-1, dart:pub(dart)});
   if(navigator.vibrate) navigator.vibrate(40);
   if(visit.length>=3) state='waitTakeout';
   render();

@@ -46,6 +46,8 @@
       case 'hello': log('Lens verbunden'); break;
       case 'dart':
         for (i = 0; i < S.visit.length; i++) if (S.visit[i].id === m.id) return;
+        // Gleichlauf: erster Dart einer neuen Aufnahme am iPhone -> alte Aufnahme am PC abschließen
+        if ((m.idx === 0 && S.visit.length) || S.visit.length >= 3) handle({ type: 'takeout' });
         S.visit.push({ id: m.id, dart: m.dart });
         call('dart', m.dart); emit('dart', m.dart); log('Treffer: ' + m.dart.label);
         break;
@@ -134,7 +136,7 @@
     var st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
     btn = document.createElement('button'); btn.id = 'uazl-btn'; btn.title = 'ÜAZ Lens'; btn.innerHTML = '📷<i></i>';
     pan = document.createElement('div'); pan.id = 'uazl-pan';
-    pan.innerHTML = '<h4>ÜAZ LENS – Kamera</h4><div>Code am iPhone eingeben:</div><div id="uazl-code">----</div><div id="uazl-st"></div>' +
+    pan.innerHTML = '<h4>ÜAZ LENS – Kamera <small style="color:#8b949e">v4</small></h4><div>Code am iPhone eingeben:</div><div id="uazl-code">----</div><div id="uazl-st"></div>' +
       '<div id="uazl-log"></div><div><button data-a="new">Neuer Code</button><button data-a="t20">Test T20</button><button data-a="bull">Test Bull</button></div>';
     document.body.appendChild(btn); document.body.appendChild(pan);
     btn.onclick = function () { pan.classList.toggle('open'); };
