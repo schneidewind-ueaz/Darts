@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ÜAZ Lens Test</title>
+<style>
+body{margin:0;background:#0d1117;color:#e6edf3;font-family:-apple-system,Segoe UI,Roboto,sans-serif;display:flex;flex-direction:column;align-items:center;padding:30px 16px}
+h1{letter-spacing:.1em;font-size:20px;margin:0 0 6px}h1 span{color:#f0b429}
+p{color:#8b949e;text-align:center;max-width:520px}
+#rest{font-size:110px;font-weight:800;line-height:1;margin:20px 0 10px}
+.darts{display:flex;gap:10px}
+.darts div{width:90px;height:70px;border-radius:14px;background:#161b22;border:2px solid #30363d;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800}
+#hist{margin-top:20px;color:#8b949e;font-size:14px;text-align:center}
+button{margin-top:18px;font:inherit;background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:10px;padding:8px 14px}
+</style>
+</head>
+<body>
+<h1>ÜAZ LENS <span>TESTSPIEL 501</span></h1>
+<p>Rechts unten auf 📷 tippen, den Code am iPhone in der Lens-Seite eingeben und werfen. Die Treffer erscheinen hier automatisch.</p>
+<div id="rest">501</div>
+<div class="darts"><div>–</div><div>–</div><div>–</div></div>
+<div id="hist"></div>
+<button onclick="reset()">Neues Spiel</button>
+
+<script src="lens-empfaenger.js"></script>
+<script>
+let rest=501, turn=[], startOfTurn=501, hist=[];
+const box=[...document.querySelectorAll('.darts div')];
+function show(){
+  document.getElementById('rest').textContent=rest;
+  box.forEach((b,i)=>b.textContent=turn[i]?turn[i].label:'–');
+  document.getElementById('hist').innerHTML=hist.slice(-6).join(' · ');
+  UAZLens.info('Rest: '+rest);
+}
+function reset(){ rest=501; startOfTurn=501; turn=[]; hist=[]; show(); }
+
+UAZLens.setAdapter({
+  dart(d){
+    if(turn.length>=3) return;
+    turn.push(d); rest-=d.value;
+    if(rest<0 || rest===1 || (rest===0 && d.mult!==2)){ hist.push('Überworfen'); rest=startOfTurn; turn=[]; }  // Bust
+    else if(rest===0){ hist.push('🎯 Checkout!'); }
+    show();
+  },
+  undo(){ const d=turn.pop(); if(d) rest+=d.value; show(); },
+  takeout(){ if(turn.length) hist.push(turn.map(d=>d.label).join(' ')+' = '+turn.reduce((s,d)=>s+d.value,0)); turn=[]; startOfTurn=rest; show(); }
+});
+show();
+</script>
+</body>
+</html>

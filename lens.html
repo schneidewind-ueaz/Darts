@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0d1117">
+<title>ÜAZ Lens</title>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--acc:#2ea043;--acc2:#f0b429;--err:#f85149;--blue:#388bfd}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none}
+body{padding:env(safe-area-inset-top) 12px calc(env(safe-area-inset-bottom) + 12px)}
+header{display:flex;align-items:center;gap:8px;padding:10px 0;flex-wrap:wrap}
+h1{font-size:18px;margin:0;letter-spacing:.08em;font-weight:800}
+h1 span{color:var(--acc2)}
+.pill{font-size:12px;padding:4px 10px;border-radius:99px;background:var(--panel);border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.pill.ok{color:#fff;background:var(--acc);border-color:var(--acc)}
+.pill.err{color:#fff;background:var(--err);border-color:var(--err)}
+.conn{display:flex;gap:6px;margin-left:auto}
+input,select{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+#code{width:84px;text-align:center;font-size:18px;letter-spacing:.15em;font-weight:700}
+button{font:inherit;font-weight:600;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;cursor:pointer;touch-action:manipulation}
+button:active{transform:scale(.97)}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+button.warn{background:var(--acc2);border-color:var(--acc2);color:#111}
+#stage{position:relative;width:100%;border-radius:14px;overflow:hidden;background:#000;border:1px solid var(--line);touch-action:none}
+#stage video,#stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#stage video{object-fit:fill}
+#banner{position:absolute;left:8px;right:8px;top:8px;padding:8px 10px;border-radius:10px;background:rgba(13,17,23,.82);font-size:14px;text-align:center;pointer-events:none}
+#banner:empty{display:none}
+#status{margin:10px 0 6px;font-size:15px;text-align:center;min-height:20px;color:var(--muted)}
+#status b{color:var(--text)}
+#info{text-align:center;font-size:14px;color:var(--acc2);min-height:18px}
+.visit{display:grid;grid-template-columns:repeat(3,1fr) 1.1fr;gap:8px;margin:6px 0 10px}
+.chip{height:62px;border-radius:14px;border:2px dashed var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:24px;font-weight:800;background:var(--panel)}
+.chip small{font-size:11px;font-weight:500;color:var(--muted)}
+.chip.full{border-style:solid;border-color:var(--blue)}
+.chip.sel{border-color:var(--acc2);box-shadow:0 0 0 3px rgba(240,180,41,.3)}
+.chip.sum{border-style:solid;border-color:var(--acc);font-size:26px}
+.row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.sheet{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);border-radius:18px 18px 0 0;padding:14px 12px calc(env(safe-area-inset-bottom) + 14px);transform:translateY(105%);transition:transform .2s;z-index:10;max-height:80vh;overflow:auto}
+.sheet.open{transform:none}
+.sheet h3{margin:0 0 4px;font-size:16px}
+.sheet p{margin:0 0 10px;color:var(--muted);font-size:13px}
+.mult{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}
+.mult button.on{background:var(--blue);border-color:var(--blue);color:#fff}
+.nums{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:8px}
+.nums button{padding:12px 0;font-size:18px}
+.extra{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+label.set{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}
+.set-row{display:flex;gap:8px;align-items:center}
+.set-row input[type=range]{flex:1}
+.hint{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.4}
+</style>
+</head>
+<body>
+<header>
+  <h1>ÜAZ <span>LENS</span></h1>
+  <span id="cpill" class="pill">nicht verbunden</span>
+  <div class="conn">
+    <input id="code" inputmode="numeric" maxlength="4" placeholder="Code">
+    <button id="btnConnect" class="pri">Verbinden</button>
+  </div>
+</header>
+
+<div id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="overlay"></canvas>
+  <div id="banner">Kamera wird gestartet …</div>
+</div>
+
+<div id="status"></div>
+<div id="info"></div>
+
+<div class="visit">
+  <div class="chip" data-i="0"><small>Dart 1</small><span>–</span></div>
+  <div class="chip" data-i="1"><small>Dart 2</small><span>–</span></div>
+  <div class="chip" data-i="2"><small>Dart 3</small><span>–</span></div>
+  <div class="chip sum"><small>Summe</small><span id="sum">0</span></div>
+</div>
+
+<div class="row">
+  <button id="btnTakeout" class="warn">Darts gezogen</button>
+  <button id="btnUndo">Rückgängig</button>
+  <button id="btnCalib">Kalibrieren</button>
+  <button id="btnSettings">⚙︎</button>
+</div>
+
+<!-- Korrektur -->
+<div id="pad" class="sheet">
+  <h3 id="padTitle">Korrektur</h3>
+  <p>Feld wählen – oder direkt im Kamerabild auf den Dart tippen.</p>
+  <div class="mult">
+    <button data-m="1" class="on">Single</button><button data-m="2">Double</button><button data-m="3">Triple</button>
+  </div>
+  <div class="nums" id="nums"></div>
+  <div class="extra">
+    <button data-x="25">25</button><button data-x="BULL">Bull</button><button data-x="MISS">Miss</button><button id="padClose">Abbrechen</button>
+  </div>
+</div>
+
+<!-- Kalibrierung -->
+<div id="calSheet" class="sheet">
+  <h3>Kalibrieren</h3>
+  <p id="calText"></p>
+  <div class="row" style="grid-template-columns:1fr 1fr 1fr">
+    <button id="calReset">Neu anfangen</button>
+    <button id="calCancel">Abbrechen</button>
+    <button id="calDone" class="pri">Fertig</button>
+  </div>
+  <div class="hint">Punkte lassen sich nach dem Setzen mit dem Finger verschieben. Das grüne Gitter muss genau auf den Drähten der Scheibe liegen.</div>
+</div>
+
+<!-- Einstellungen -->
+<div id="setSheet" class="sheet">
+  <h3>Einstellungen</h3>
+  <label class="set">Empfindlichkeit</label>
+  <div class="set-row"><span>niedrig</span><input id="sens" type="range" min="1" max="10" step="1"><span>hoch</span></div>
+  <label class="set">Position des iPhones zur Scheibe</label>
+  <select id="camPos" style="width:100%">
+    <option value="auto">Automatisch erkennen</option>
+    <option value="unten">unterhalb der Scheibe</option>
+    <option value="oben">oberhalb der Scheibe</option>
+    <option value="links">links neben der Scheibe</option>
+    <option value="rechts">rechts neben der Scheibe</option>
+  </select>
+  <label class="set"><input id="showGrid" type="checkbox"> Gitter im Bild anzeigen</label>
+  <label class="set"><input id="showDiff" type="checkbox"> Erkannte Veränderung anzeigen (Diagnose)</label>
+  <div class="row" style="grid-template-columns:1fr;margin-top:12px"><button id="setClose" class="pri">Schließen</button></div>
+  <div class="hint">
+    Tipps: iPhone fest auf ein Stativ, schräg seitlich oder unterhalb der Scheibe (nicht frontal – dort verdeckt der Dart seine eigene Spitze). Gleichmäßiges Licht ohne harte Schatten, z.&nbsp;B. LED-Ring. Display bleibt an, solange diese Seite offen ist.
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const video = $('#video'), overlay = $('#overlay'), octx = overlay.getContext('2d');
+const stage = $('#stage'), banner = $('#banner');
+const SEG = [20,1,18,4,13,6,10,15,2,17,3,19,7,16,8,11,14,9,12,5];
+const R = {bull:6.35, outer:15.9, tIn:99, tOut:107, dIn:162, dOut:170};
+const BOARD_PTS = [[0,0],[0,-R.dOut],[R.dOut,0],[0,R.dOut],[-R.dOut,0]];
+const CAL_LABELS = ['die Mitte des Bulls','die Außenkante des Doppelrings oben bei der 20','die Außenkante des Doppelrings rechts bei der 6','die Außenkante des Doppelrings unten bei der 3','die Außenkante des Doppelrings links bei der 11'];
+
+// ---------- Speicher ----------
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem('uazlens.'+k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem('uazlens.'+k, JSON.stringify(v)); }catch(e){} }
+};
+const settings = Object.assign({sens:5, camPos:'auto', showGrid:true, showDiff:false}, store.get('settings', {}));
+
+// ---------- Mathe: Homographie ----------
+function normT(pts){
+  let cx=0, cy=0; pts.forEach(p=>{cx+=p[0];cy+=p[1];}); cx/=pts.length; cy/=pts.length;
+  let d=0; pts.forEach(p=>{d+=Math.hypot(p[0]-cx,p[1]-cy);}); d/=pts.length;
+  const s = Math.SQRT2/(d||1);
+  return {T:[s,0,-s*cx, 0,s,-s*cy, 0,0,1], Ti:[1/s,0,cx, 0,1/s,cy, 0,0,1]};
+}
+function mul(A,B){ const C=new Array(9); for(let i=0;i<3;i++)for(let j=0;j<3;j++){C[i*3+j]=A[i*3]*B[j]+A[i*3+1]*B[3+j]+A[i*3+2]*B[6+j];} return C; }
+function apply(H,x,y){ const w=H[6]*x+H[7]*y+H[8]; return [(H[0]*x+H[1]*y+H[2])/w,(H[3]*x+H[4]*y+H[5])/w]; }
+function solve(M, b){ // Gauss mit Pivotsuche
+  const n=b.length;
+  for(let c=0;c<n;c++){
+    let p=c; for(let r=c+1;r<n;r++) if(Math.abs(M[r][c])>Math.abs(M[p][c])) p=r;
+    [M[c],M[p]]=[M[p],M[c]]; [b[c],b[p]]=[b[p],b[c]];
+    const v=M[c][c]; if(Math.abs(v)<1e-12) return null;
+    for(let r=c+1;r<n;r++){ const f=M[r][c]/v; if(!f) continue; for(let k=c;k<n;k++) M[r][k]-=f*M[c][k]; b[r]-=f*b[c]; }
+  }
+  const x=new Array(n);
+  for(let r=n-1;r>=0;r--){ let s=b[r]; for(let k=r+1;k<n;k++) s-=M[r][k]*x[k]; x[r]=s/M[r][r]; }
+  return x;
+}
+function homography(src, dst){
+  const ns=normT(src), nd=normT(dst);
+  const s=src.map(p=>apply(ns.T,p[0],p[1])), d=dst.map(p=>apply(nd.T,p[0],p[1]));
+  const M=Array.from({length:8},()=>new Array(8).fill(0)), r=new Array(8).fill(0);
+  const add=(row,val)=>{ for(let i=0;i<8;i++){ r[i]+=row[i]*val; for(let j=0;j<8;j++) M[i][j]+=row[i]*row[j]; } };
+  for(let i=0;i<s.length;i++){
+    const [x,y]=s[i], [u,v]=d[i];
+    add([x,y,1,0,0,0,-u*x,-u*y],u);
+    add([0,0,0,x,y,1,-v*x,-v*y],v);
+  }
+  const h=solve(M,r); if(!h) return null;
+  return mul(nd.Ti, mul([...h,1], ns.T));
+}
+
+// ---------- Wertung ----------
+function scoreAt(x,y){
+  const r=Math.hypot(x,y);
+  if(r<=R.bull)  return {code:'BULL', label:'Bull', num:25, mult:2, value:50};
+  if(r<=R.outer) return {code:'25',   label:'25',   num:25, mult:1, value:25};
+  if(r>R.dOut)   return {code:'MISS', label:'Miss', num:0,  mult:0, value:0};
+  let a=Math.atan2(x,-y)*180/Math.PI; if(a<0) a+=360;
+  const n=SEG[Math.floor(((a+9)%360)/18)];
+  const m = r>=R.dIn ? 2 : (r>=R.tIn && r<=R.tOut ? 3 : 1);
+  const code=(m===3?'T':m===2?'D':'S')+n;
+  return {code, label: m===1 ? String(n) : code, num:n, mult:m, value:n*m};
+}
+function makeDart(code){
+  if(code==='BULL') return {code:'BULL', label:'Bull', num:25, mult:2, value:50};
+  if(code==='25')   return {code:'25', label:'25', num:25, mult:1, value:25};
+  if(code==='MISS') return {code:'MISS', label:'Miss', num:0, mult:0, value:0};
+  const m={S:1,D:2,T:3}[code[0]], n=+code.slice(1);
+  return {code, label: m===1 ? String(n) : code, num:n, mult:m, value:n*m};
+}
+
+// ---------- Zustand ----------
+let calib = store.get('calib', null);   // {pts:[[x,y]..] in Videopixeln, vw, vh}
+let Hi2b=null, Hb2i=null, camDir=[0,1], camDirWeak=false;
+let calMode=false, calPts=[], dragIdx=-1;
+let visit=[], padMode=null, padMult=1;
+let state='armed'; // armed | waitTakeout
+let resetRefPending=true;
+
+// ---------- Kamera ----------
+async function startCamera(){
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}});
+    video.srcObject = stream;
+    await video.play();
+    await new Promise(r=>{ if(video.videoWidth) r(); else video.onloadedmetadata=()=>r(); });
+    layout();
+    if(calib && calib.vw===video.videoWidth && calib.vh===video.videoHeight){ applyCalib(calib.pts); banner.textContent=''; }
+    else { calib=null; banner.textContent='Bitte zuerst kalibrieren (Knopf „Kalibrieren“).'; }
+    requestWake();
+    loop();
+  }catch(e){
+    banner.textContent='Kein Kamerazugriff: '+(e.message||e.name)+' – Seite muss über https laufen und die Kamera erlaubt sein.';
+  }
+}
+function layout(){
+  const vw=video.videoWidth||16, vh=video.videoHeight||9;
+  stage.style.aspectRatio = vw+' / '+vh;
+  const r=stage.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+  overlay.width=Math.round(r.width*dpr); overlay.height=Math.round(r.height*dpr);
+  setupAnalysis();
+}
+window.addEventListener('resize', ()=>setTimeout(layout,200));
+let wakeLock=null;
+async function requestWake(){ try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); } }catch(e){} }
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') requestWake(); });
+
+// ---------- Kalibrierung ----------
+function applyCalib(pts){
+  Hi2b = homography(pts, BOARD_PTS);
+  Hb2i = homography(BOARD_PTS, pts);
+  if(!Hi2b||!Hb2i){ Hi2b=Hb2i=null; return false; }
+  estimateCamDir();
+  setupAnalysis();
+  resetRefPending=true;
+  return true;
+}
+function estimateCamDir(){
+  // Die Seite der Scheibe, die im Bild größer erscheint, ist der Kamera am nächsten.
+  const sc=[]; let mean=0;
+  for(let deg=0;deg<360;deg+=15){
+    const t=deg*Math.PI/180, x=150*Math.cos(t), y=150*Math.sin(t);
+    const p=apply(Hb2i,x,y), px=apply(Hb2i,x+1,y), py=apply(Hb2i,x,y+1);
+    const det=Math.abs((px[0]-p[0])*(py[1]-p[1])-(px[1]-p[1])*(py[0]-p[0]));
+    sc.push([Math.cos(t),Math.sin(t),det]); mean+=det;
+  }
+  mean/=sc.length;
+  let vx=0, vy=0; sc.forEach(([cx,cy,d])=>{vx+=(d-mean)*cx; vy+=(d-mean)*cy;});
+  const mag=Math.hypot(vx,vy), rel=mag/(mean*sc.length);
+  camDirWeak = rel<0.01;
+  autoDir = camDirWeak ? [0,1] : [vx/mag, vy/mag];
+  updateCamDir();
+}
+let autoDir=[0,1];
+function updateCamDir(){
+  camDir = ({unten:[0,1], oben:[0,-1], links:[-1,0], rechts:[1,0]})[settings.camPos] || autoDir;
+}
+function calMessage(){
+  if(calPts.length<5) $('#calText').innerHTML = `Punkt ${calPts.length+1} von 5: Tippe auf <b>${CAL_LABELS[calPts.length]}</b>.`;
+  else $('#calText').innerHTML = 'Alle Punkte gesetzt. Gitter prüfen, ggf. Punkte verschieben, dann <b>Fertig</b>.';
+}
+$('#btnCalib').onclick=()=>{ closeSheets(); calMode=true; calPts = calib ? calib.pts.map(p=>p.slice()) : []; if(calPts.length===5) applyCalib(calPts); calMessage(); $('#calSheet').classList.add('open'); };
+$('#calReset').onclick=()=>{ calPts=[]; Hi2b=Hb2i=null; calMessage(); };
+$('#calCancel').onclick=()=>{ calMode=false; $('#calSheet').classList.remove('open'); if(calib) applyCalib(calib.pts); else { Hi2b=Hb2i=null; } };
+$('#calDone').onclick=()=>{
+  if(calPts.length<5){ calMessage(); return; }
+  if(!applyCalib(calPts)){ $('#calText').textContent='Die Punkte ergeben keine gültige Scheibe – bitte neu setzen.'; return; }
+  calib={pts:calPts.map(p=>p.slice()), vw:video.videoWidth, vh:video.videoHeight};
+  store.set('calib', calib);
+  calMode=false; $('#calSheet').classList.remove('open');
+  banner.textContent = camDirWeak && settings.camPos==='auto' ? 'Hinweis: Kamera steht sehr frontal – Erkennung wird ungenau. Besser schräg von unten oder seitlich.' : '';
+  if(banner.textContent) setTimeout(()=>{ banner.textContent=''; }, 6000);
+};
+
+// ---------- Eingabe auf dem Bild ----------
+function toVideo(e){
+  const r=stage.getBoundingClientRect();
+  return [(e.clientX-r.left)*video.videoWidth/r.width, (e.clientY-r.top)*video.videoHeight/r.height];
+}
+stage.addEventListener('pointerdown', e=>{
+  if(!video.videoWidth) return;
+  const p=toVideo(e);
+  if(calMode){
+    const tol = 40*video.videoWidth/stage.getBoundingClientRect().width;
+    dragIdx = calPts.findIndex(q=>Math.hypot(q[0]-p[0],q[1]-p[1])<tol);
+    if(dragIdx<0 && calPts.length<5){ calPts.push(p); dragIdx=calPts.length-1; }
+    if(calPts.length===5) applyCalib(calPts);
+    calMessage(); stage.setPointerCapture(e.pointerId);
+    return;
+  }
+  if(padMode && Hi2b){ const b=apply(Hi2b,p[0],p[1]); applyPad(scoreAt(b[0],b[1]), b); }
+});
+stage.addEventListener('pointermove', e=>{
+  if(!calMode || dragIdx<0) return;
+  calPts[dragIdx]=toVideo(e);
+  if(calPts.length===5) applyCalib(calPts);
+});
+stage.addEventListener('pointerup', ()=>{ dragIdx=-1; });
+
+// ---------- Bildanalyse ----------
+const acan=document.createElement('canvas'), actx=acan.getContext('2d',{willReadFrequently:true});
+let AW=0, AH=0, K=1, bx=null, by=null, mask=null, maskIdx=null, boardPx=0;
+let prev=null, ref=null, emptyRef=null, stillFrames=0, lastDiff=null;
+function setupAnalysis(){
+  if(!video.videoWidth) return;
+  AW=320; AH=Math.round(AW*video.videoHeight/video.videoWidth); K=AW/video.videoWidth;
+  acan.width=AW; acan.height=AH;
+  const N=AW*AH; bx=new Float32Array(N); by=new Float32Array(N); mask=new Uint8Array(N);
+  const idx=[]; boardPx=0;
+  if(Hi2b){
+    for(let j=0;j<AH;j++) for(let i=0;i<AW;i++){
+      const k=j*AW+i, b=apply(Hi2b,(i+.5)/K,(j+.5)/K);
+      bx[k]=b[0]; by[k]=b[1];
+      if(i>0&&j>0&&i<AW-1&&j<AH-1&&Math.hypot(b[0],b[1])<=185){ mask[k]=1; idx.push(k); }
+    }
+  }
+  maskIdx=Int32Array.from(idx); boardPx=idx.length;
+  prev=ref=emptyRef=null;
+}
+function grab(){
+  actx.drawImage(video,0,0,AW,AH);
+  const d=actx.getImageData(0,0,AW,AH).data, g=new Uint8ClampedArray(AW*AH);
+  for(let i=0,p=0;i<g.length;i++,p+=4) g[i]=(d[p]*77+d[p+1]*150+d[p+2]*29)>>8;
+  return g;
+}
+function thresholds(){
+  const T = 62 - settings.sens*4;              // Grauwert-Schwelle 22..58
+  const minDart = Math.max(10, boardPx*0.0007);
+  const maxDart = boardPx*0.12;
+  return {T, minDart, maxDart, still: Math.max(6, minDart*0.5)};
+}
+function countDiff(a,b,T){ let c=0; for(let n=0;n<maskIdx.length;n++){ const k=maskIdx[n]; if(Math.abs(a[k]-b[k])>T) c++; } return c; }
+function findDart(cur, base, T, minDart){
+  const N=AW*AH, ch=new Uint8Array(N);
+  for(let n=0;n<maskIdx.length;n++){ const k=maskIdx[n]; if(Math.abs(cur[k]-base[k])>T) ch[k]=1; }
+  const f=new Uint8Array(N);
+  for(let n=0;n<maskIdx.length;n++){
+    const k=maskIdx[n]; if(!ch[k]) continue;
+    const nb=ch[k-1]+ch[k+1]+ch[k-AW]+ch[k+AW]+ch[k-AW-1]+ch[k-AW+1]+ch[k+AW-1]+ch[k+AW+1];
+    if(nb>=3) f[k]=1;
+  }
+  // größte zusammenhängende Fläche
+  const seen=new Uint8Array(N); let best=[];
+  for(let n=0;n<maskIdx.length;n++){
+    const s=maskIdx[n]; if(!f[s]||seen[s]) continue;
+    const comp=[], st=[s]; seen[s]=1;
+    while(st.length){ const k=st.pop(); comp.push(k);
+      for(const q of [k-1,k+1,k-AW,k+AW]) if(f[q]&&!seen[q]){ seen[q]=1; st.push(q); } }
+    if(comp.length>best.length) best=comp;
+  }
+  lastDiff=best;
+  if(best.length < minDart*0.6) return null;
+  // Spitze = Ende des Darts, das zur Kamera zeigt (der Schaft wird von der Kamera weg projiziert)
+  let mx=-Infinity; const proj=new Float32Array(best.length);
+  for(let i=0;i<best.length;i++){ const k=best[i]; proj[i]=bx[k]*camDir[0]+by[k]*camDir[1]; if(proj[i]>mx) mx=proj[i]; }
+  let sx=0, sy=0, c=0;
+  for(let i=0;i<best.length;i++) if(proj[i]>=mx-3){ sx+=bx[best[i]]; sy+=by[best[i]]; c++; }
+  return {x:sx/c, y:sy/c, size:best.length};
+}
+function loop(){
+  setTimeout(loop, 110);
+  if(!Hi2b || calMode || !boardPx || video.readyState<2){ draw(); return; }
+  const cur=grab(), th=thresholds();
+  if(!prev){ prev=cur; ref=cur; emptyRef=cur; draw(); return; }
+  const motion=countDiff(cur,prev,th.T); prev=cur;
+  stillFrames = motion<th.still ? stillFrames+1 : 0;
+  if(stillFrames>=3){
+    if(resetRefPending){ ref=cur; emptyRef=cur; resetRefPending=false; }
+    else if(state==='armed'){
+      const change=countDiff(cur,ref,th.T);
+      if(change>=th.minDart && change<th.maxDart){
+        const hit=findDart(cur,ref,th.T,th.minDart);
+        ref=cur;
+        if(hit) addDart(scoreAt(hit.x,hit.y), [hit.x,hit.y]);
+      } else if(change>=th.maxDart){
+        // große Veränderung: Hand/Person – oder Darts schon gezogen
+        if(visit.length && countDiff(cur,emptyRef,th.T)<th.minDart) takeout(false);
+      } else if(change < th.minDart*0.3){ ref=cur; } // Lichtdrift ausgleichen
+    } else if(state==='waitTakeout'){
+      if(countDiff(cur,emptyRef,th.T)<th.minDart) takeout(false);
+    }
+  }
+  draw();
+}
+
+// ---------- Zeichnen ----------
+function draw(){
+  const W=overlay.width, Hh=overlay.height; octx.clearRect(0,0,W,Hh);
+  if(!video.videoWidth) return;
+  const s=W/video.videoWidth;
+  const P=(x,y)=>{ const p=apply(Hb2i,x,y); return [p[0]*s,p[1]*s]; };
+  if(Hb2i && (settings.showGrid || calMode)){
+    octx.strokeStyle='rgba(46,160,67,.9)'; octx.lineWidth=Math.max(1,W/500);
+    for(const r of [R.bull,R.outer,R.tIn,R.tOut,R.dIn,R.dOut]){
+      octx.beginPath();
+      for(let i=0;i<=72;i++){ const t=i/72*2*Math.PI, p=P(r*Math.sin(t),-r*Math.cos(t)); i?octx.lineTo(p[0],p[1]):octx.moveTo(p[0],p[1]); }
+      octx.stroke();
+    }
+    for(let i=0;i<20;i++){
+      const t=(i*18-9)*Math.PI/180, a=P(R.outer*Math.sin(t),-R.outer*Math.cos(t)), b=P(R.dOut*Math.sin(t),-R.dOut*Math.cos(t));
+      octx.beginPath(); octx.moveTo(a[0],a[1]); octx.lineTo(b[0],b[1]); octx.stroke();
+    }
+    octx.fillStyle='rgba(240,180,41,.95)'; octx.font=`bold ${Math.round(W/38)}px sans-serif`; octx.textAlign='center'; octx.textBaseline='middle';
+    for(let i=0;i<20;i++){ const t=i*18*Math.PI/180, p=P(190*Math.sin(t),-190*Math.cos(t)); octx.fillText(SEG[i],p[0],p[1]); }
+  }
+  if(settings.showDiff && lastDiff && !calMode){
+    octx.fillStyle='rgba(248,81,73,.55)'; const q=W/AW;
+    for(const k of lastDiff) octx.fillRect((k%AW)*q,Math.floor(k/AW)*q,q,q);
+  }
+  if(Hb2i && !calMode){
+    visit.forEach((d,i)=>{ if(!d.pos) return; const p=P(d.pos[0],d.pos[1]);
+      octx.fillStyle = i===visit.length-1 ? '#f0b429' : '#388bfd';
+      octx.beginPath(); octx.arc(p[0],p[1],W/90,0,2*Math.PI); octx.fill();
+      octx.strokeStyle='#000'; octx.lineWidth=2; octx.stroke(); });
+  }
+  if(calMode){
+    calPts.forEach((p,i)=>{ const x=p[0]*s, y=p[1]*s;
+      octx.strokeStyle='#f0b429'; octx.lineWidth=3; octx.beginPath(); octx.arc(x,y,W/45,0,2*Math.PI); octx.stroke();
+      octx.beginPath(); octx.moveTo(x-W/30,y); octx.lineTo(x+W/30,y); octx.moveTo(x,y-W/30); octx.lineTo(x,y+W/30); octx.stroke();
+      octx.fillStyle='#f0b429'; octx.font=`bold ${Math.round(W/30)}px sans-serif`; octx.fillText(i+1,x+W/25,y-W/25); });
+  }
+}
+
+// ---------- Aufnahme / Korrektur ----------
+let seq=0;
+function newId(){ return Date.now().toString(36)+'-'+(seq++); }
+function addDart(d, pos){
+  if(visit.length>=3) return;
+  const dart=Object.assign({id:newId(), pos}, d);
+  visit.push(dart);
+  send({type:'dart', id:dart.id, dart:pub(dart)});
+  if(navigator.vibrate) navigator.vibrate(40);
+  if(visit.length>=3) state='waitTakeout';
+  render();
+}
+function pub(d){ return {code:d.code, label:d.label, num:d.num, mult:d.mult, value:d.value}; }
+function takeout(manual){
+  visit=[]; state='armed'; padMode=null; closeSheets();
+  if(manual) resetRefPending=true; else { ref=prev; emptyRef=prev; }
+  send({type:'takeout'});
+  render();
+}
+$('#btnTakeout').onclick=()=>takeout(true);
+$('#btnUndo').onclick=()=>{ const d=visit.pop(); if(!d) return; send({type:'undo', id:d.id}); state='armed'; resetRefPending=true; render(); };
+
+document.querySelectorAll('.chip[data-i]').forEach(ch=>ch.onclick=()=>{
+  const i=+ch.dataset.i;
+  padMode = i<visit.length ? {replace:i} : {add:true};
+  $('#padTitle').textContent = padMode.replace!==undefined ? `Dart ${i+1} korrigieren (erkannt: ${visit[i].label})` : `Dart ${visit.length+1} nachtragen`;
+  closeSheets(); $('#pad').classList.add('open'); render();
+});
+const nums=$('#nums'); for(let n=1;n<=20;n++){ const b=document.createElement('button'); b.textContent=n; b.onclick=()=>applyPad(makeDart((padMult===3?'T':padMult===2?'D':'S')+n)); nums.appendChild(b); }
+document.querySelectorAll('.mult button').forEach(b=>b.onclick=()=>{ padMult=+b.dataset.m; document.querySelectorAll('.mult button').forEach(x=>x.classList.toggle('on',x===b)); });
+document.querySelectorAll('.extra [data-x]').forEach(b=>b.onclick=()=>applyPad(makeDart(b.dataset.x)));
+$('#padClose').onclick=()=>{ padMode=null; closeSheets(); render(); };
+function applyPad(d, pos){
+  if(!padMode) return;
+  if(padMode.replace!==undefined){
+    const old=visit[padMode.replace]; const nd=Object.assign({id:old.id, pos: pos||null}, d);
+    visit[padMode.replace]=nd; send({type:'replace', id:old.id, dart:pub(nd)});
+  } else {
+    addDart(d, pos||null);
+    ref=prev; // aktuelles Bild als neue Basis
+  }
+  padMode=null; padMult=1; document.querySelectorAll('.mult button').forEach(x=>x.classList.toggle('on',x.dataset.m==='1'));
+  closeSheets(); render();
+}
+function render(){
+  document.querySelectorAll('.chip[data-i]').forEach(ch=>{
+    const i=+ch.dataset.i, d=visit[i];
+    ch.querySelector('span').textContent = d ? d.label : '–';
+    ch.classList.toggle('full', !!d);
+    ch.classList.toggle('sel', !!padMode && padMode.replace===i);
+  });
+  $('#sum').textContent = visit.reduce((s,d)=>s+d.value,0);
+  const st=$('#status');
+  if(!calib) st.innerHTML='Noch nicht kalibriert.';
+  else if(state==='waitTakeout') st.innerHTML='<b>3 Darts erkannt.</b> Darts ziehen – wird automatisch erkannt.';
+  else st.innerHTML=`<b>Bereit</b> – Dart ${visit.length+1} werfen.`;
+}
+function closeSheets(){ document.querySelectorAll('.sheet').forEach(s=>s.classList.remove('open')); }
+
+// ---------- Einstellungen ----------
+$('#sens').value=settings.sens; $('#camPos').value=settings.camPos; $('#showGrid').checked=settings.showGrid; $('#showDiff').checked=settings.showDiff;
+$('#btnSettings').onclick=()=>{ closeSheets(); $('#setSheet').classList.add('open'); };
+$('#setClose').onclick=()=>closeSheets();
+$('#sens').oninput=e=>{ settings.sens=+e.target.value; store.set('settings',settings); };
+$('#camPos').onchange=e=>{ settings.camPos=e.target.value; updateCamDir(); store.set('settings',settings); };
+$('#showGrid').onchange=e=>{ settings.showGrid=e.target.checked; store.set('settings',settings); };
+$('#showDiff').onchange=e=>{ settings.showDiff=e.target.checked; store.set('settings',settings); };
+
+// ---------- Verbindung (PeerJS / WebRTC) ----------
+let peer=null, conn=null, queue=[];
+const cpill=$('#cpill');
+function setPill(t,cls){ cpill.textContent=t; cpill.className='pill'+(cls?' '+cls:''); }
+function send(m){ if(conn && conn.open) conn.send(m); else { queue.push(m); if(queue.length>50) queue.shift(); } }
+function connect(){
+  const code=$('#code').value.replace(/\D/g,'');
+  if(code.length!==4){ setPill('Code: 4 Ziffern','err'); return; }
+  store.set('code', code);
+  if(typeof Peer==='undefined'){ setPill('Verbindungsbibliothek fehlt','err'); return; }
+  if(conn) try{ conn.close(); }catch(e){}
+  setPill('verbinde …');
+  const go=()=>{
+    conn=peer.connect('uazlens-'+code, {reliable:true});
+    conn.on('open', ()=>{ setPill('verbunden '+code,'ok'); conn.send({type:'hello', app:'ÜAZ Lens', v:1}); while(queue.length) conn.send(queue.shift()); });
+    conn.on('data', m=>{ if(m && m.type==='info') $('#info').textContent=m.text||''; });
+    conn.on('close', ()=>{ setPill('getrennt','err'); setTimeout(()=>{ if(!conn||!conn.open) connect(); }, 3000); });
+    conn.on('error', ()=>setPill('Fehler','err'));
+  };
+  if(peer && peer.open) go();
+  else { peer=new Peer(); peer.on('open', go); peer.on('error', e=>{ setPill(e.type==='peer-unavailable'?'Dartbord nicht gefunden':'Verbindungsfehler','err'); });
+         peer.on('disconnected', ()=>{ try{ peer.reconnect(); }catch(e){} }); }
+}
+$('#btnConnect').onclick=connect;
+const saved=store.get('code',''); if(saved){ $('#code').value=saved; setTimeout(connect, 500); }
+
+render();
+startCamera();
+})();
+</script>
+</body>
+</html>
